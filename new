@@ -44,9 +44,11 @@ _start:
 		#there is some data need to read
 		call 		read_poll
 		mov r10, r3  #r10 stores sensor data
+        mov r22, r3
 
 		call 		read_poll
 		mov r11, r3  #r11 stores speed data
+        mov r21, r3
 		
 	#Sensor data and speed data are read. Next decide what to do
 	/******************control instructions section*******************/
@@ -212,13 +214,13 @@ SPEED:
 TIMER_HANDLER: fix
   # clear screen
   movi	r4, 0x1b
-  call	write_term
+  call	WRITE_TO_TERMINAL
   movi	r4, '['
-  call	write_term
+  call	WRITE_TO_TERMINAL
   movi	r4, '2'
-  call	write_term
+  call	WRITE_TO_TERMINAL
   movi	r4, 'J'
-  call	write_term
+  call	WRITE_TO_TERMINAL
 
   bne r20, r0, PRINT_SENSOR
   br PRINT_SPEED
@@ -277,4 +279,16 @@ WAIT:
   # write byte to UART_TERM
   stwio r4, 0(r8)
   ret
-	
+  
+    /* convert number&char to ascii char r4=num */
+CONVERT_TO_ASCII:
+  andi r2, r4, 0xF #only care about lowest 4 bit
+  movi r8, 9		#ASCII numbers only has 0 - 9
+  bgt r2, r8, IS_CHAR
+  br is_num
+IS_NUM:
+  addi r2, r2, '0'
+  ret
+IS_CHAR:
+  addi r2, r2, 55
+  ret
