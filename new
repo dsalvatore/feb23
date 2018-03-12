@@ -3,6 +3,10 @@
 .equ  get_sensor_speed_data, 	0x02   #get sensor &speed data
 .equ  get_position_data, 	0x03   #get position data
 .equ TIMER, 0xFF202000
+.equ  TIMER0_STATUS,    0
+.equ  TIMER0_CONTROL,   4
+.equ  TIMER0_PERIODL,   8
+.equ  TIMER0_PERIODH,   12
 .equ UART_TERMINAL, 0xFF201000
 
 .equ  deacceleration, 	-70
@@ -17,6 +21,8 @@
 
 .equ  turn_break_deacceleration, 	-127
 
+.equ  TICKSPERSEC,  10000000
+
 
 #initialize global variable
 movi r20, 0 # if r20 is 0, get speed if r20 is 1. get sensor data
@@ -25,13 +31,41 @@ movi r22, 0 #r22 stores sensor data
 
 .global _start
 _start:
+
+SET_TIMER:
+  movia r8, TIMER # base address
+  movi r9, 0b1000 #stop the timer first
+  stwio r9, 4(r8)
+  stwio r0, 0(r8) #set time out
+
+  # Set the period registers to 10^7
+  addi  r9, r0, %lo (TICKSPERSEC)
+  stwio r9, TIMER0_PERIODL(r8)
+  addi  r9, r0, %hi(TICKSPERSEC)
+  stwio r9, TIMER0_PERIODH(r8)
+  
+  addi  r9, r0, 0b0111                  #set timer on, continuous, interrupt
+  stwio r9, TIMER0_CONTROL(r8)
+
+ #set up UART interrupts
+SET_UART:
+  movia r8, UART_TERMINAL
+  movi r9, 1 #initialized read interrupt
+  stwio r9, 4(r8)
+
+  #init processor interrupt
+  movi r9, 0b0100000001
+  wrctl ctl3, r9
+  movi r9, 1
+  wrctl ctl0, r9
+  
+SET_CAR_UART:
 	movia r8, JTAG_UART   #r8 now contains the base address
 	mov r9, r0  #initialize the instruction
 
 	movia r17, 43
 	movia r18, 60
 	movia r20, 40
-	
 
 	Read_Data:#read both the speed and sensor data
 		movia r9, get_sensor_speed_data  #get sensor &speed data first
@@ -211,7 +245,18 @@ SPEED:
   br EXIT
 
  /* handles timer interrupt */
-TIMER_HANDLER: fix
+TIMER_HANDLER: 
+	movia r11, 0xff200000 #led adress
+	beq r12, r0, TURN_ON
+	movi r12, 0
+	br updated
+
+	TURN_ON:
+	movi r12, 1
+	
+	updated:
+	stwio r12, 0(r11)  #display led0
+
   # clear screen
   movi	r4, 0x1b
   call	WRITE_TO_TERMINAL
@@ -231,7 +276,7 @@ PRINT_SPEED:
 
   # display higher 4 bit
   mov r4, r21
-  srli r4, 4
+  srli r4, r4, 4
   call CONVERT_TO_ASCII
   mov r4, r2
   call WRITE_TO_TERMINAL
@@ -285,10 +330,13 @@ CONVERT_TO_ASCII:
   andi r2, r4, 0xF #only care about lowest 4 bit
   movi r8, 9		#ASCII numbers only has 0 - 9
   bgt r2, r8, IS_CHAR
-  br is_num
+  br IS_NUM
 IS_NUM:
   addi r2, r2, '0'
   ret
 IS_CHAR:
   addi r2, r2, 55
   ret
+	
+
+
