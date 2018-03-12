@@ -1,0 +1,280 @@
+/******************************initial equ**************************************/
+.equ  JTAG_UART, 		0x10001020
+.equ  get_sensor_speed_data, 	0x02   #get sensor &speed data
+.equ  get_position_data, 	0x03   #get position data
+.equ TIMER, 0xFF202000
+.equ UART_TERMINAL, 0xFF201000
+
+.equ  deacceleration, 	-70
+.equ  hard_deacceleration, 	-127
+.equ  acceleration, 	60
+.equ  hard_acceleration, 	127
+
+.equ  left, -50
+.equ  break_left, -127
+.equ  right, 50 
+.equ  break_right, 127
+
+.equ  turn_break_deacceleration, 	-127
+
+
+#initialize global variable
+movi r20, 0 # if r20 is 0, get speed if r20 is 1. get sensor data
+movi r21, 0 #r21 stores speed data
+movi r22, 0 #r22 stores sensor data
+
+.global _start
+_start:
+	movia r8, JTAG_UART   #r8 now contains the base address
+	mov r9, r0  #initialize the instruction
+
+	movia r17, 43
+	movia r18, 60
+	movia r20, 40
+	
+
+	Read_Data:#read both the speed and sensor data
+		movia r9, get_sensor_speed_data  #get sensor &speed data first
+		call 		write_poll#give the instruction
+
+
+		call 		read_poll#get data from PC, stored in r3
+		bne r3, r0, Read_Data#then check wether the data is what we want, if is 0, wait for the next read
+
+		#there is some data need to read
+		call 		read_poll
+		mov r10, r3  #r10 stores sensor data
+
+		call 		read_poll
+		mov r11, r3  #r11 stores speed data
+		
+	#Sensor data and speed data are read. Next decide what to do
+	/******************control instructions section*******************/
+	#here we have bothe the direction and speed control
+		
+	
+
+
+	/******direction control instructions section******/
+	Change_direction:
+
+		movia r9,  0x05 #set direction
+		call write_poll #give the instruction
+
+		movia r12, 0x1f#0b11111
+		movia r13, 0x1e#0b11110
+		movia r14, 0x1c#0b11100
+		movia r15, 0x0f#0b01111
+		movia r16, 0x07#0b00111
+
+		
+		
+		beq r10, r12, go_straight 
+		beq r10, r13, turn_right
+		beq r10, r14, turn_break_right
+		beq r10, r15, turn_left	
+		beq r10, r16, turn_break_left
+		
+
+	/***sub direction control section*****/
+	go_straight :
+		mov r9, r0
+		call write_poll
+		br change_speed
+
+	turn_left:
+		movia r9, left
+		call write_poll
+		br change_speed
+		#br turn_speed
+
+	turn_break_left:
+
+		movia r9, break_left
+		call write_poll
+		br change_speed
+		#br turn_speed
+
+
+
+	turn_right:
+		movia r9, right
+		call write_poll
+		br change_speed
+		#br turn_speed
+
+
+
+	turn_break_right:
+		movia r9, break_right
+		call write_poll
+		br change_speed
+
+	change_speed:
+
+		movia r9, 0x04 #set acceleration
+		call write_poll#give instruction
+
+
+		blt r11, r17, hard_accelerate# <20
+		beq r11, r17, noChange# = 40
+		bgt r11, r17, decelerate# >40
+		bgt r11, r18, hard_decelerate# >60
+
+		br  Read_Data
+
+
+	/***sub speed control section*****/
+    hard_accelerate:
+		movia r9, hard_acceleration
+		call write_poll
+		br Read_Data
+
+	accelerate:
+		movia r9, acceleration
+		call write_poll
+		br Read_Data
+
+	noChange:
+		mov r9, r0
+		call write_poll
+		br Read_Data
+
+	decelerate:
+		movia r9, deacceleration
+		call write_poll
+		br Read_Data
+
+	hard_decelerate:
+		movia r9, hard_deacceleration
+		call write_poll
+		br Read_Data
+
+read_poll:
+	ldwio r2, 0(r8)  #read the data register
+	andi r3, r2, 0x8000  #Mask other bits 1111_0000_0000_0000 because only 31:16 - Number of bytes available to read
+	beq r3, r0, read_poll  #If this is 0 (branch true), data is not valid, i.e. number of data can be read is 0, 
+	#and if not 0 there is something need to read
+	andi r3, r2, 0x00ff #We only need the first 8-bit data, Data read is now storede in r3
+	ret
+
+write_poll:
+	ldwio r3, 4(r8)  #read the control register
+	srli r3, r3, 16  #Shift it right 16bits so that we can check only the write available bits
+	beq r3, r0, write_poll #If there is no space for writing, do this again
+	stwio r9, 0(r8)   #write instruction to JTAG_UART.
+	ret
+
+#lab6 starts here
+  .section .exceptions, "ax"
+ihandler:
+  # prologue
+  addi sp, sp, -12
+  stw r8,  8(sp) #1
+  stw r9,  4(sp) #1
+  stw r10, 0(sp) #1
+
+
+	
+  #determine which device triggered the interrupt
+  rdctl r8, ctl4  # read ipending
+  andi r9, r8, 0x0100 # check if it is terminal device
+  bne r8, r0, TERMINAL_HANDLER
+  
+  andi r9, r8, 0x0001 # check if it is timer
+  bne r8, r0, TIMER_HANDLER
+  br EXIT
+
+TERMINAL_HANDLER:
+  movia r8, UART_TERMINAL
+  ldwio r9, 0(r8)
+  andi r10, r9, 0x8000 #get the read valid bit
+  bne r10, r0, READ_DATA
+  br TERMINAL_HANDLER
+  
+  READ_DATA:
+  andi r9, r9, 0x00FF	#get the actual data
+  movi r10, 's'
+  beq r10, r9, SPEED	#if the user type in 's'
+  movi r10, 'r'
+  beq r10, r9, SENSOR		#if the user type in 'r'
+  br EXIT	#if neither
+
+SENSOR: 
+  movi r20, 1 
+  br EXIT
+
+SPEED: 
+  movi r20, 0
+  br EXIT
+
+ /* handles timer interrupt */
+TIMER_HANDLER: fix
+  # clear screen
+  movi	r4, 0x1b
+  call	write_term
+  movi	r4, '['
+  call	write_term
+  movi	r4, '2'
+  call	write_term
+  movi	r4, 'J'
+  call	write_term
+
+  bne r20, r0, PRINT_SENSOR
+  br PRINT_SPEED
+
+  #display speed on terminal
+PRINT_SPEED:
+#assume the speed is two hex character
+
+  # display higher 4 bit
+  mov r4, r21
+  srli r4, 4
+  call CONVERT_TO_ASCII
+  mov r4, r2
+  call WRITE_TO_TERMINAL
+  
+  # display lower 4 bit
+  mov r4, r21
+  call CONVERT_TO_ASCII
+  mov r4, r2
+  call WRITE_TO_TERMINAL
+  br EXIT
+
+  #display sensors on terminal
+PRINT_SENSOR:
+  # display higher 4 bit
+  srli r4, r22, 4
+  call CONVERT_TO_ASCII
+  mov r4, r2
+  call WRITE_TO_TERMINAL
+  
+  # display lower 4 bit
+  mov r4, r22
+  call CONVERT_TO_ASCII
+  mov r4, r2
+  call WRITE_TO_TERMINAL
+
+
+EXIT:
+  # epilogue
+  ldw r8, 8(sp)
+  ldw r9, 4(sp)
+  ldw r10, 0(sp)
+  addi sp, sp, 12
+  addi ea, ea, -4
+  eret
+
+
+WRITE_TO_TERMINAL:
+  # wait until ready to write
+  movia r8, UART_TERMINAL
+WAIT:
+  ldwio r9, 4(r8)
+  srli r9, r9, 16
+  beq r9, r0, WAIT
+
+  # write byte to UART_TERM
+  stwio r4, 0(r8)
+  ret
+	
